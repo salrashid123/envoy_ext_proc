@@ -51,19 +51,21 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 			return nil
 		}
 		if err != nil {
-			log.Printf("receive error %v", err)
-			continue
+			return status.Errorf(codes.Unknown, "cannot receive stream request: %v", err)
 		}
 
-		var resp *pb.ProcessingResponse
+		resp := &pb.ProcessingResponse{}
 		switch v := req.Request.(type) {
 		case *pb.ProcessingRequest_RequestHeaders:
 			log.Printf("pb.ProcessingRequest_RequestHeaders %v \n", v)
 			r := req.Request
 			h := r.(*pb.ProcessingRequest_RequestHeaders)
+			//log.Printf("Got RequestHeaders.Attributes %v", h.RequestHeaders.Attributes)
+			//log.Printf("Got RequestHeaders.Headers %v", h.RequestHeaders.Headers)
+
 			for _, n := range h.RequestHeaders.Headers.Headers {
 				log.Printf("Header %s %s", n.Key, n.Value)
-				if n.Key == "user" {					
+				if n.Key == "user" {
 					log.Printf(">>>> Processing User Header")
 					rhq := &pb.HeadersResponse{
 						Response: &pb.CommonResponse{
@@ -77,16 +79,14 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 						Response: &pb.ProcessingResponse_RequestHeaders{
 							RequestHeaders: rhq,
 						},
-						// ModeOverride: &v3alpha.ProcessingMode{
-						// 	RequestBodyMode: v3alpha.ProcessingMode_BUFFERED,
-						// },
+						ModeOverride: &v3alpha.ProcessingMode{
+							RequestBodyMode:    v3alpha.ProcessingMode_BUFFERED,
+							ResponseHeaderMode: v3alpha.ProcessingMode_SEND,
+						},
 					}
-					if err := srv.Send(resp); err != nil {
-						log.Printf("send error %v", err)
-					}
-					return nil
 				}
 			}
+			break
 
 		case *pb.ProcessingRequest_RequestBody:
 			log.Printf("pb.ProcessingRequest_RequestBody %v \n", v)
@@ -106,7 +106,6 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 		if err := srv.Send(resp); err != nil {
 			log.Printf("send error %v", err)
 		}
-
 	}
 }
 ```
