@@ -11,6 +11,8 @@ client ->  envoy -> upstream
 
 >> NOTE, this filter is really early and has a lot of features to implement!
 
+- Source: [ext_proc.cc](https://github.com/envoyproxy/envoy/blob/main/source/extensions/filters/http/ext_proc/ext_proc.cc)
+
 ---
 
 All we will demonstrate in this repo is the most basic functionality:  simply remove a specific heder sent by the client.  I know, there are countless other ways to do this with envoy but just as a demonstration of writing the external gRPC server that this functionality uses. If interested, pls read on:
@@ -19,8 +21,7 @@ All we will demonstrate in this repo is the most basic functionality:  simply re
 First this code was just commited in PR [14385](https://github.com/envoyproxy/envoy/pull/14385) so we will need envoy from the dev branch that was just committed
 
 ```bash
-docker cp `docker create envoyproxy/envoy-dev:5c801b25cae04f06bf48248c90e87d623d7a6283`:/usr/local/bin/envoy .
-  ./envoy  version: 483dd3007f15e47deed0a29d945ff776abb37815/1.17.0-dev/Clean/RELEASE/BoringSSL
+docker cp `docker create  envoyproxy/envoy-dev:latest`:/usr/local/bin/envoy .
 ```
 
 Now start the external gRPC server
