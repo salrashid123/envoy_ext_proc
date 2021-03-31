@@ -3,7 +3,7 @@
 A really basic implementation of envoy [External Processing Filter](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/http/ext_proc/v3alpha/ext_proc.proto#external-processing-filter).  This capability allows you to define an external gRPC server which can selectively process headers and payload/body of requests (see [External Processing Filter PRD](https://docs.google.com/document/d/1IZqm5IUnG9gc2VqwGaN5C2TZAD9_QbsY9Vvy5vr9Zmw/edit#heading=h.3zlthggr9vvv).  Basically, your own unrestricted filter.
 
 ```
-          ext_proc   (redact specific header from client to upstream)
+          ext_proc 
              ^
              |
 client ->  envoy -> upstream
@@ -15,10 +15,45 @@ client ->  envoy -> upstream
 
 ---
 
-All we will demonstrate in this repo is the most basic functionality:  simply remove a specific heder sent by the client.  I know, there are countless other ways to do this with envoy but just as a demonstration of writing the external gRPC server that this functionality uses. If interested, pls read on:
+All we will demonstrate in this repo is the most basic functionality: manipulate headers and body-content on the request/response.  I know, there are countless other ways to do this with envoy but just as a demonstration of writing the external gRPC server that this functionality uses. If interested, pls read on:
+
+The scenario is like this
 
 
-First this code was just commited in PR [14385](https://github.com/envoyproxy/envoy/pull/14385) so we will need envoy from the dev branch that was just committed
+A) Manipulate outbound headers and body
+
+```
+          ext_proc   (delete specific header from client to upstream; append body content sent to upstream)
+             ^
+             |
+client ->  envoy -> upstream
+```
+
+B) Manipulate response headers and body
+
+```
+          ext_proc   (delete specific header from upstream to client; append body content sent to client)
+             ^
+             |
+client <-  envoy <- upstream
+```
+
+
+---
+
+Specifically for (A), if a header key= "user" is sent by the client **AND** if the request is a POST, the external processing filter will
+ - redact that header
+ - append 'foo' to the body and send that to `httpbin.org/post`
+
+
+If A is triggered, the couple of headers from httpbin are removed and the content type is set to text.  Finally, the response body has the text `qux` appended to it.
+
+
+If the request type is GET or if the header 'user' is not present no modifications are made
+
+---
+
+First this code was just committed in PR [14385](https://github.com/envoyproxy/envoy/pull/14385) so we will need envoy from the dev branch that was just committed
 
 ```bash
 docker cp `docker create  envoyproxy/envoy-dev:latest`:/usr/local/bin/envoy .
@@ -33,81 +68,10 @@ go run grpc_server.go
 This will start the gRPC server which will receive the requests from envoy.  
 
 
-I'm not sure if i've impelemnted the server correctly but the following does redact the `user` header from upstream
+I'm not sure if i've implemented the server correctly but the following does redact the `user` header from upstream
 
 ```golang
-func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 
-	log.Println("Got stream:  -->  ")
-	ctx := srv.Context()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		req, err := srv.Recv()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return status.Errorf(codes.Unknown, "cannot receive stream request: %v", err)
-		}
-
-		resp := &pb.ProcessingResponse{}
-		switch v := req.Request.(type) {
-		case *pb.ProcessingRequest_RequestHeaders:
-			log.Printf("pb.ProcessingRequest_RequestHeaders %v \n", v)
-			r := req.Request
-			h := r.(*pb.ProcessingRequest_RequestHeaders)
-			//log.Printf("Got RequestHeaders.Attributes %v", h.RequestHeaders.Attributes)
-			//log.Printf("Got RequestHeaders.Headers %v", h.RequestHeaders.Headers)
-
-			for _, n := range h.RequestHeaders.Headers.Headers {
-				log.Printf("Header %s %s", n.Key, n.Value)
-				if n.Key == "user" {
-					log.Printf(">>>> Processing User Header")
-					rhq := &pb.HeadersResponse{
-						Response: &pb.CommonResponse{
-							HeaderMutation: &pb.HeaderMutation{
-								RemoveHeaders: []string{"user"},
-							},
-						},
-					}
-
-					resp = &pb.ProcessingResponse{
-						Response: &pb.ProcessingResponse_RequestHeaders{
-							RequestHeaders: rhq,
-						},
-						ModeOverride: &v3alpha.ProcessingMode{
-							RequestBodyMode:    v3alpha.ProcessingMode_BUFFERED,
-							ResponseHeaderMode: v3alpha.ProcessingMode_SEND,
-						},
-					}
-				}
-			}
-			break
-
-		case *pb.ProcessingRequest_RequestBody:
-			log.Printf("pb.ProcessingRequest_RequestBody %v \n", v)
-			r := req.Request
-			b := r.(*pb.ProcessingRequest_RequestBody)
-			log.Printf("RequestBody: %v", b)
-			break
-		case *pb.ProcessingRequest_ResponseHeaders:
-			log.Printf("pb.ProcessingRequest_ResponseHeaders %v \n", v)
-			break
-		case *pb.ProcessingRequest_ResponseBody:
-			log.Printf("pb.ProcessingRequest_ResponseBody %v \n", v)
-			break
-		default:
-			log.Printf("Unknown Request type %v\n", v)
-		}
-		if err := srv.Send(resp); err != nil {
-			log.Printf("send error %v", err)
-		}
-	}
-}
 ```
 
 As more features are implemented, you can handle new processing request types.  
@@ -118,165 +82,213 @@ Now start envoy
 ./envoy -c server.yaml -l debug
 ```
 
+Note, the external processing filter is by default configured to ONLY ask for the inbound request headers.  What we're going to do in code is first check if the header contains the specific value we're interested in (i.,e header has a 'user' in it), if so, then we will ask for the request body, which will ask for the response headers which inturn will override and ask for the response body
 
-Send in a user request (not the header value)
-
-```bash
-$ curl -v -H "host: http.domain.com"  --resolve  http.domain.com:8080:127.0.0.1  -H "user: sal" http://http.domain.com:8080/get
+```yaml
+          http_filters:
+          - name: envoy.filters.http.ext_proc
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3alpha.ExternalProcessor
+              failure_mode_allow: false
+              async_mode: false              
+              request_attributes:
+              - user
+              response_attributes:
+              - server
+              processing_mode:
+                request_header_mode: "SEND"
+                response_header_mode: "SKIP"
+                request_body_mode: "NONE"
+                response_body_mode: "NONE"
+                request_trailer_mode: "SKIP"
+                response_trailer_mode: "SKIP"
+              grpc_service:
+                envoy_grpc:                  
+                  cluster_name: ext_proc_cluster
 ```
 
-Note that we send in `user: sal` as the header.
+Send in some requests
 
-The response JSON you see there is the header **received** by the upstream (httpbin) simply echo'd back to the client.  Note that httpbin did not get that header.
 
- In other words, our filter redacted this header value
+>> note, in each of tests, the upstream is `httpbin.org` which will just echo back the inbound request to the caller and display the headers and body *it got* back as the json response (i.,e the json response below is what httpbin saw)
+
+1) GET Request
+
+In this case, we should not expect any modifications to take place.
 
 ```bash
+$ curl -v -H "host: http.domain.com"  --resolve  http.domain.com:8080:127.0.0.1  http://http.domain.com:8080/get
+
 > GET /get HTTP/1.1
 > Host: http.domain.com
-> User-Agent: curl/7.72.0
+> User-Agent: curl/7.74.0
 > Accept: */*
-> user: sal
-> 
+
 
 < HTTP/1.1 200 OK
-< date: Tue, 12 Jan 2021 00:24:19 GMT
+< date: Wed, 31 Mar 2021 16:59:50 GMT
 < content-type: application/json
-< content-length: 338
+< content-length: 311
 < server: envoy
 < access-control-allow-origin: *
 < access-control-allow-credentials: true
-< x-envoy-upstream-service-time: 62
+< x-envoy-upstream-service-time: 31
 
 {
   "args": {}, 
   "headers": {
     "Accept": "*/*", 
-    "Content-Length": "0", 
     "Host": "http.domain.com", 
-    "User-Agent": "curl/7.72.0", 
-    "X-Amzn-Trace-Id": "Root=1-5ffcec33-584741a32a36fdfa1efc38cf", 
+    "User-Agent": "curl/7.74.0", 
+    "X-Amzn-Trace-Id": "Root=1-6064aa86-1e8e99652e2c7ee003a2750f", 
     "X-Envoy-Expected-Rq-Timeout-Ms": "15000"
   }, 
-  "origin": "69.250.44.79", 
+  "origin": "108.51.98.171", 
   "url": "https://http.domain.com/get"
 }
-
 ```
 
+2) GET Request with user header
 
-Here are the envoy logs that show the ext grpc request
+Here we're also not expecting changes
 
-```log
-[2021-01-11 19:24:19.911][406520][debug][conn_handler] [source/server/connection_handler_impl.cc:501] [C3] new connection
-[2021-01-11 19:24:19.911][406520][debug][http] [source/common/http/conn_manager_impl.cc:254] [C3] new stream
-[2021-01-11 19:24:19.911][406520][debug][http] [source/common/http/conn_manager_impl.cc:886] [C3][S5237988511417372870] request headers complete (end_stream=true):
-':authority', 'http.domain.com'
-':path', '/get'
-':method', 'GET'
-'user-agent', 'curl/7.72.0'
-'accept', '*/*'
-'user', 'sal'
+```bash
+$ curl -v -H "host: http.domain.com"  --resolve  http.domain.com:8080:127.0.0.1  -H "user: sal" http://http.domain.com:8080/get
 
-[2021-01-11 19:24:19.911][406520][debug][http] [source/common/http/filter_manager.cc:755] [C3][S5237988511417372870] request end stream
-[2021-01-11 19:24:19.912][406520][debug][router] [source/common/router/router.cc:425] [C0][S6098826058427749220] cluster 'ext_proc_cluster' match for URL '/envoy.service.ext_proc.v3alpha.ExternalProcessor/Process'
-[2021-01-11 19:24:19.912][406520][debug][router] [source/common/router/router.cc:582] [C0][S6098826058427749220] router decoding headers:
-':method', 'POST'
-':path', '/envoy.service.ext_proc.v3alpha.ExternalProcessor/Process'
-':authority', 'ext_proc_cluster'
-':scheme', 'http'
-'te', 'trailers'
-'grpc-timeout', '200m'
-'content-type', 'application/grpc'
-'x-envoy-internal', 'true'
-'x-forwarded-for', '192.168.1.22'
-'x-envoy-expected-rq-timeout-ms', '200'
+> GET /get HTTP/1.1
+> Host: http.domain.com
+> User-Agent: curl/7.74.0
+> Accept: */*
+> user: sal
 
-[2021-01-11 19:24:19.912][406520][debug][pool] [source/common/http/conn_pool_base.cc:79] queueing stream due to no available connections
-[2021-01-11 19:24:19.912][406520][debug][pool] [source/common/conn_pool/conn_pool_base.cc:106] creating a new connection
-[2021-01-11 19:24:19.912][406520][debug][client] [source/common/http/codec_client.cc:41] [C4] connecting
-[2021-01-11 19:24:19.912][406520][debug][connection] [source/common/network/connection_impl.cc:860] [C4] connecting to 127.0.0.1:18080
-[2021-01-11 19:24:19.912][406520][debug][connection] [source/common/network/connection_impl.cc:876] [C4] connection in progress
-[2021-01-11 19:24:19.912][406520][debug][http2] [source/common/http/http2/codec_impl.cc:1184] [C4] updating connection-level initial window size to 268435456
-[2021-01-11 19:24:19.912][406520][debug][connection] [source/common/network/connection_impl.cc:666] [C4] connected
-[2021-01-11 19:24:19.912][406520][debug][client] [source/common/http/codec_client.cc:80] [C4] connected
-[2021-01-11 19:24:19.912][406520][debug][pool] [source/common/conn_pool/conn_pool_base.cc:225] [C4] attaching to next stream
-[2021-01-11 19:24:19.912][406520][debug][pool] [source/common/conn_pool/conn_pool_base.cc:130] [C4] creating stream
-[2021-01-11 19:24:19.912][406520][debug][router] [source/common/router/upstream_request.cc:354] [C0][S6098826058427749220] pool ready
-[2021-01-11 19:24:19.915][406520][debug][router] [source/common/router/router.cc:1174] [C0][S6098826058427749220] upstream headers complete: end_stream=false
-[2021-01-11 19:24:19.915][406520][debug][http] [source/common/http/async_client_impl.cc:101] async http request response headers (end_stream=false):
-':status', '200'
-'content-type', 'application/grpc'
+< HTTP/1.1 200 OK
+< date: Wed, 31 Mar 2021 17:00:37 GMT
+< content-type: application/json
+< content-length: 331
+< server: envoy
+< access-control-allow-origin: *
+< access-control-allow-credentials: true
+< x-envoy-upstream-service-time: 24
 
-[2021-01-11 19:24:19.915][406520][debug][filter] [source/extensions/filters/http/ext_proc/ext_proc.cc:54] Received gRPC message. State = 1
-[2021-01-11 19:24:19.915][406520][debug][filter] [source/extensions/filters/http/ext_proc/ext_proc.cc:59] applying request_headers response
-[2021-01-11 19:24:19.915][406520][debug][router] [source/common/router/router.cc:425] [C3][S5237988511417372870] cluster 'service_httpbin' match for URL '/get'
-[2021-01-11 19:24:19.915][406520][debug][router] [source/common/router/router.cc:582] [C3][S5237988511417372870] router decoding headers:
-':authority', 'http.domain.com'
-':path', '/get'
-':method', 'GET'
-':scheme', 'https'
-'user-agent', 'curl/7.72.0'
-'accept', '*/*'
-'x-forwarded-proto', 'http'
-'x-request-id', '43f9f971-b43a-4856-bf23-2eb92dc976c3'
-'x-envoy-expected-rq-timeout-ms', '15000'
-
-[2021-01-11 19:24:19.915][406520][debug][pool] [source/common/http/conn_pool_base.cc:79] queueing stream due to no available connections
-[2021-01-11 19:24:19.915][406520][debug][pool] [source/common/conn_pool/conn_pool_base.cc:106] creating a new connection
-[2021-01-11 19:24:19.915][406520][debug][client] [source/common/http/codec_client.cc:41] [C5] connecting
-[2021-01-11 19:24:19.915][406520][debug][connection] [source/common/network/connection_impl.cc:860] [C5] connecting to 3.211.1.78:443
-[2021-01-11 19:24:19.915][406520][debug][connection] [source/common/network/connection_impl.cc:876] [C5] connection in progress
-[2021-01-11 19:24:19.915][406520][debug][client] [source/common/http/codec_client.cc:112] [C4] response complete
-[2021-01-11 19:24:19.915][406520][debug][pool] [source/common/conn_pool/conn_pool_base.cc:159] [C4] destroying stream: 0 remaining
-[2021-01-11 19:24:19.915][406520][debug][router] [source/common/router/upstream_request.cc:296] [C0][S6098826058427749220] resetting pool request
-[2021-01-11 19:24:19.915][406520][debug][http] [source/common/http/async_client_impl.cc:128] async http request response trailers:
-'grpc-status', '0'
-'grpc-message', ''
-
-[2021-01-11 19:24:19.915][406520][debug][filter] [source/extensions/filters/http/ext_proc/ext_proc.cc:114] Received gRPC stream close
-[2021-01-11 19:24:19.915][406520][debug][http2] [source/common/http/http2/codec_impl.cc:964] [C4] stream closed: 0
-[2021-01-11 19:24:19.915][406520][debug][http2] [source/common/http/http2/codec_impl.cc:873] [C4] sent reset code=0
-[2021-01-11 19:24:19.928][406520][debug][connection] [source/common/network/connection_impl.cc:666] [C5] connected
-[2021-01-11 19:24:19.961][406520][error][envoy_bug] [source/extensions/transport_sockets/tls/context_impl.cc:643] envoy bug failure: value_stat_name != fallback. Details: Unexpected ssl.sigalgs value: rsa_pkcs1_sha512
-[2021-01-11 19:24:19.961][406520][debug][client] [source/common/http/codec_client.cc:80] [C5] connected
-[2021-01-11 19:24:19.961][406520][debug][pool] [source/common/conn_pool/conn_pool_base.cc:225] [C5] attaching to next stream
-[2021-01-11 19:24:19.961][406520][debug][pool] [source/common/conn_pool/conn_pool_base.cc:130] [C5] creating stream
-[2021-01-11 19:24:19.961][406520][debug][router] [source/common/router/upstream_request.cc:354] [C3][S5237988511417372870] pool ready
-[2021-01-11 19:24:19.978][406520][debug][router] [source/common/router/router.cc:1174] [C3][S5237988511417372870] upstream headers complete: end_stream=false
-[2021-01-11 19:24:19.979][406520][debug][http] [source/common/http/conn_manager_impl.cc:1484] [C3][S5237988511417372870] encoding headers via codec (end_stream=false):
-':status', '200'
-'date', 'Tue, 12 Jan 2021 00:24:19 GMT'
-'content-type', 'application/json'
-'content-length', '338'
-'server', 'envoy'
-'access-control-allow-origin', '*'
-'access-control-allow-credentials', 'true'
-'x-envoy-upstream-service-time', '62'
+{
+  "args": {}, 
+  "headers": {
+    "Accept": "*/*", 
+    "Host": "http.domain.com", 
+    "User": "sal", 
+    "User-Agent": "curl/7.74.0", 
+    "X-Amzn-Trace-Id": "Root=1-6064aab5-1c5e1204091c69600d45b6ba", 
+    "X-Envoy-Expected-Rq-Timeout-Ms": "15000"
+  }, 
+  "origin": "108.51.98.171", 
+  "url": "https://http.domain.com/get"
+}
 ```
 
-and the grpc server logs
+3) POST Request with user header
 
-```log
-$ go run grpc_server.go 
-2021/01/11 19:23:41 Starting gRPC server on port :18080
-2021/01/11 19:23:43 Handling grpc Check request + service:"envoy.service.ext_proc.v3alpha.ExternalProcessor"
-2021/01/11 19:23:49 Handling grpc Check request + service:"envoy.service.ext_proc.v3alpha.ExternalProcessor"
-2021/01/11 19:23:54 Handling grpc Check request + service:"envoy.service.ext_proc.v3alpha.ExternalProcessor"
-2021/01/11 19:23:59 Handling grpc Check request + service:"envoy.service.ext_proc.v3alpha.ExternalProcessor"
-2021/01/11 19:24:05 Handling grpc Check request + service:"envoy.service.ext_proc.v3alpha.ExternalProcessor"
-2021/01/11 19:24:10 Handling grpc Check request + service:"envoy.service.ext_proc.v3alpha.ExternalProcessor"
-2021/01/11 19:24:16 Handling grpc Check request + service:"envoy.service.ext_proc.v3alpha.ExternalProcessor"
-2021/01/11 19:24:19 Got stream:  -->  
-2021/01/11 19:24:19 pb.ProcessingRequest_RequestHeaders &{headers:{headers:{key:":authority"  value:"http.domain.com"}  headers:{key:":path"  value:"/get"}  headers:{key:":method"  value:"GET"}  headers:{key:"user-agent"  value:"curl/7.72.0"}  headers:{key:"accept"  value:"*/*"}  headers:{key:"user"  value:"sal"}  headers:{key:"x-forwarded-proto"  value:"http"}  headers:{key:"x-request-id"  value:"43f9f971-b43a-4856-bf23-2eb92dc976c3"}}  end_of_stream:true} 
-2021/01/11 19:24:19 Header :authority http.domain.com
-2021/01/11 19:24:19 Header :path /get
-2021/01/11 19:24:19 Header :method GET
-2021/01/11 19:24:19 Header user-agent curl/7.72.0
-2021/01/11 19:24:19 Header accept */*
-2021/01/11 19:24:19 Header user sal
-2021/01/11 19:24:19 >>>> Processing User Header
-2021/01/11 19:24:21 Handling grpc Check request + service:"envoy.service.ext_proc.v3alpha.ExternalProcessor"
+In this case,we send in a POST but no user header so also no difference
+
+```bash
+$ curl -v -H "host: http.domain.com" -H "content-type: text/plain" --resolve  http.domain.com:8080:127.0.0.1  -d 'foo' http://http.domain.com:8080/post
+
+> POST /post HTTP/1.1
+> Host: http.domain.com
+> User-Agent: curl/7.74.0
+> Accept: */*
+> content-type: text/plain
+> Content-Length: 3
+
+< HTTP/1.1 200 OK
+< date: Wed, 31 Mar 2021 17:03:06 GMT
+< content-type: application/json
+< content-length: 441
+< server: envoy
+< access-control-allow-origin: *
+< access-control-allow-credentials: true
+< x-envoy-upstream-service-time: 8
+
+{
+  "args": {}, 
+  "data": "foo", 
+  "files": {}, 
+  "form": {}, 
+  "headers": {
+    "Accept": "*/*", 
+    "Content-Length": "3", 
+    "Content-Type": "text/plain", 
+    "Host": "http.domain.com", 
+    "User-Agent": "curl/7.74.0", 
+    "X-Amzn-Trace-Id": "Root=1-6064ab4a-6df7e0d437a8ad2637c35fce", 
+    "X-Envoy-Expected-Rq-Timeout-Ms": "15000"
+  }, 
+  "json": null, 
+  "origin": "108.51.98.171", 
+  "url": "https://http.domain.com/post"
+}
+```
+
+4) Finally, 
+
+We send a post request and the 'user' header below
+
+What happens is that the external processing filter will
+
+1. In `*pb.ProcessingRequest_RequestHeaders`,  
+  - detect and remove `user` header
+  - instruct further processing of the request body
+
+2. In `*pb.ProcessingRequest_RequestBody`,
+  - append `bar` to the inbound request body
+  - update the content-length header (since thats just what we did here by appending)
+
+3. In `*pb.ProcessingRequest_ResponseHeaders`,
+  - remove the following headers sent by httpbin:  `"access-control-allow-origin", "access-control-allow-credentials"`
+  - update the content-length value by addin in the byte-length contained in the data we're going to later add to the body (i.e, add by #bytes in `qux`) 
+
+4. In `*pb.ProcessingRequest_ResponseBody`
+  - Append `qux` to the response body sent by httpbin
+
+
+
+```bash
+$ curl -v -H "host: http.domain.com" -H "content-type: text/plain" --resolve  http.domain.com:8080:127.0.0.1  -H "user: sal" -d 'foo' http://http.domain.com:8080/post
+
+> POST /post HTTP/1.1
+> Host: http.domain.com
+> User-Agent: curl/7.74.0
+> Accept: */*
+> content-type: text/plain
+> user: sal
+> Content-Length: 3
+
+< HTTP/1.1 200 OK
+< date: Wed, 31 Mar 2021 17:05:01 GMT
+< server: envoy
+< x-envoy-upstream-service-time: 24
+< content-type: text/plain
+< content-length: 453
+
+{
+  "args": {}, 
+  "data": "foo baaar ", 
+  "files": {}, 
+  "form": {}, 
+  "headers": {
+    "Accept": "*/*", 
+    "Content-Length": "10", 
+    "Content-Type": "text/plain", 
+    "Host": "http.domain.com", 
+    "User-Agent": "curl/7.74.0", 
+    "X-Amzn-Trace-Id": "Root=1-6064abbd-1a54289105d3cec56cec7c9c", 
+    "X-Envoy-Expected-Rq-Timeout-Ms": "15000"
+  }, 
+  "json": null, 
+  "origin": "108.51.98.171", 
+  "url": "https://http.domain.com/post"
+}
+
+ qux
 ```
 
 ---

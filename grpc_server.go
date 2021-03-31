@@ -8,15 +8,20 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
-	"google.golang.org/grpc"
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 
+	//core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
+
+	//"github.com/golang/protobuf/ptypes/wrappers"
 
 	v3alpha "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3alpha"
 	pb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3alpha"
@@ -69,14 +74,22 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 			//log.Printf("Got RequestHeaders.Attributes %v", h.RequestHeaders.Attributes)
 			//log.Printf("Got RequestHeaders.Headers %v", h.RequestHeaders.Headers)
 
+			isPOST := false
+			for _, n := range h.RequestHeaders.Headers.Headers {
+				if n.Key == ":method" && n.Value == "POST" {
+					isPOST = true
+					break
+				}
+			}
+
 			for _, n := range h.RequestHeaders.Headers.Headers {
 				log.Printf("Header %s %s", n.Key, n.Value)
-				if n.Key == "user" {
-					log.Printf(">>>> Processing User Header")
+				if n.Key == "user" && isPOST {
+					log.Printf("Processing User Header")
 					rhq := &pb.HeadersResponse{
 						Response: &pb.CommonResponse{
 							HeaderMutation: &pb.HeaderMutation{
-								RemoveHeaders: []string{"user"},
+								RemoveHeaders: []string{"content-length", "user"},
 							},
 						},
 					}
@@ -87,7 +100,8 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 						},
 						ModeOverride: &v3alpha.ProcessingMode{
 							RequestBodyMode:    v3alpha.ProcessingMode_BUFFERED,
-							ResponseHeaderMode: v3alpha.ProcessingMode_SEND,
+							ResponseHeaderMode: v3alpha.ProcessingMode_SKIP,
+							ResponseBodyMode:   v3alpha.ProcessingMode_NONE,
 						},
 					}
 				}
@@ -95,16 +109,108 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 			break
 
 		case *pb.ProcessingRequest_RequestBody:
-			log.Printf("pb.ProcessingRequest_RequestBody %v \n", v)
+
 			r := req.Request
 			b := r.(*pb.ProcessingRequest_RequestBody)
-			log.Printf("RequestBody: %v", b)
+			log.Printf("   RequestBody: %s", string(b.RequestBody.Body))
+			log.Printf("   EndOfStream: %T", b.RequestBody.EndOfStream)
+			if b.RequestBody.EndOfStream {
+
+				bytesToSend := append(b.RequestBody.Body, []byte(` baaar `)...)
+				resp = &pb.ProcessingResponse{
+					Response: &pb.ProcessingResponse_RequestBody{
+						RequestBody: &pb.BodyResponse{
+							Response: &pb.CommonResponse{
+								HeaderMutation: &pb.HeaderMutation{
+									SetHeaders: []*core.HeaderValueOption{
+										{
+											Header: &core.HeaderValue{
+												Key:   "Content-Length",
+												Value: strconv.Itoa(len(bytesToSend)),
+											},
+										},
+									},
+								},
+								BodyMutation: &pb.BodyMutation{
+									Mutation: &pb.BodyMutation_Body{
+										Body: bytesToSend,
+									},
+								},
+							},
+						},
+					},
+					ModeOverride: &v3alpha.ProcessingMode{
+						ResponseHeaderMode: v3alpha.ProcessingMode_SEND,
+						ResponseBodyMode:   v3alpha.ProcessingMode_NONE,
+					},
+				}
+			}
 			break
 		case *pb.ProcessingRequest_ResponseHeaders:
 			log.Printf("pb.ProcessingRequest_ResponseHeaders %v \n", v)
+			r := req.Request
+			h := r.(*pb.ProcessingRequest_ResponseHeaders)
+
+			responseSize := 0
+			for _, n := range h.ResponseHeaders.Headers.Headers {
+				if n.Key == "content-length" {
+					responseSize, _ = strconv.Atoi(n.Value)
+					break
+				}
+			}
+
+			log.Println("  Removing access-control-allow-* headers")
+			rhq := &pb.HeadersResponse{
+				Response: &pb.CommonResponse{
+					HeaderMutation: &pb.HeaderMutation{
+						RemoveHeaders: []string{"access-control-allow-origin", "access-control-allow-credentials"},
+						SetHeaders: []*core.HeaderValueOption{
+							{
+								Header: &core.HeaderValue{
+									Key:   "content-type",
+									Value: "text/plain",
+								},
+							},
+							{
+								Header: &core.HeaderValue{
+									Key:   "content-length",
+									Value: strconv.Itoa(responseSize + len([]byte(` qux`))),
+								},
+							},
+						},
+					},
+				},
+			}
+			resp = &pb.ProcessingResponse{
+				Response: &pb.ProcessingResponse_ResponseHeaders{
+					ResponseHeaders: rhq,
+				},
+				ModeOverride: &v3alpha.ProcessingMode{
+					ResponseBodyMode: v3alpha.ProcessingMode_BUFFERED,
+				},
+			}
 			break
 		case *pb.ProcessingRequest_ResponseBody:
 			log.Printf("pb.ProcessingRequest_ResponseBody %v \n", v)
+			r := req.Request
+			b := r.(*pb.ProcessingRequest_ResponseBody)
+			if b.ResponseBody.EndOfStream {
+				bytesToSend := append(b.ResponseBody.Body, []byte(` qux`)...)
+				resp = &pb.ProcessingResponse{
+					Response: &pb.ProcessingResponse_ResponseBody{
+						ResponseBody: &pb.BodyResponse{
+							Response: &pb.CommonResponse{
+								BodyMutation: &pb.BodyMutation{
+									Mutation: &pb.BodyMutation_Body{
+										Body: bytesToSend,
+									},
+								},
+							},
+						},
+					},
+				}
+			}
+
 			break
 		default:
 			log.Printf("Unknown Request type %v\n", v)

@@ -45,8 +45,12 @@ static_resources:
               response_attributes:
               - server
               processing_mode:
-                request_header_mode: send
-                response_header_mode: send
+                request_header_mode: "SEND"
+                response_header_mode: "SKIP"
+                request_body_mode: "NONE"
+                response_body_mode: "NONE"
+                request_trailer_mode: "SKIP"
+                response_trailer_mode: "SKIP"
               grpc_service:
                 envoy_grpc:                  
                   cluster_name: ext_proc_cluster
