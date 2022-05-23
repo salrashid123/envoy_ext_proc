@@ -37,7 +37,7 @@ static_resources:
           http_filters:
           - name: envoy.filters.http.ext_proc
             typed_config:
-              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3alpha.ExternalProcessor
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
               failure_mode_allow: false
               async_mode: false              
               request_attributes:
@@ -95,5 +95,5 @@ static_resources:
         unhealthy_threshold: 1
         healthy_threshold: 3
         grpc_health_check:
-          service_name: "envoy.service.ext_proc.v3alpha.ExternalProcessor"
+          service_name: "envoy.service.ext_proc.v3.ExternalProcessor"
           authority: "server.domain.com"

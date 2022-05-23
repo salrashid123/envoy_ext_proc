@@ -14,7 +14,6 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 
-	//core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
@@ -23,8 +22,8 @@ import (
 
 	//"github.com/golang/protobuf/ptypes/wrappers"
 
-	v3alpha "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3alpha"
-	pb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3alpha"
+	v3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
+	pb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 )
 
 var (
@@ -98,10 +97,10 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 						Response: &pb.ProcessingResponse_RequestHeaders{
 							RequestHeaders: rhq,
 						},
-						ModeOverride: &v3alpha.ProcessingMode{
-							RequestBodyMode:    v3alpha.ProcessingMode_BUFFERED,
-							ResponseHeaderMode: v3alpha.ProcessingMode_SKIP,
-							ResponseBodyMode:   v3alpha.ProcessingMode_NONE,
+						ModeOverride: &v3.ProcessingMode{
+							RequestBodyMode:    v3.ProcessingMode_BUFFERED,
+							ResponseHeaderMode: v3.ProcessingMode_SKIP,
+							ResponseBodyMode:   v3.ProcessingMode_NONE,
 						},
 					}
 				}
@@ -139,9 +138,9 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 							},
 						},
 					},
-					ModeOverride: &v3alpha.ProcessingMode{
-						ResponseHeaderMode: v3alpha.ProcessingMode_SEND,
-						ResponseBodyMode:   v3alpha.ProcessingMode_NONE,
+					ModeOverride: &v3.ProcessingMode{
+						ResponseHeaderMode: v3.ProcessingMode_SEND,
+						ResponseBodyMode:   v3.ProcessingMode_NONE,
 					},
 				}
 			}
@@ -185,8 +184,8 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 				Response: &pb.ProcessingResponse_ResponseHeaders{
 					ResponseHeaders: rhq,
 				},
-				ModeOverride: &v3alpha.ProcessingMode{
-					ResponseBodyMode: v3alpha.ProcessingMode_BUFFERED,
+				ModeOverride: &v3.ProcessingMode{
+					ResponseBodyMode: v3.ProcessingMode_BUFFERED,
 				},
 			}
 			break

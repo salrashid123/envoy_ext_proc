@@ -1,6 +1,6 @@
 ### Envoy External Processing Filter
 
-A really basic implementation of envoy [External Processing Filter](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/http/ext_proc/v3alpha/ext_proc.proto#external-processing-filter).  This capability allows you to define an external gRPC server which can selectively process headers and payload/body of requests (see [External Processing Filter PRD](https://docs.google.com/document/d/1IZqm5IUnG9gc2VqwGaN5C2TZAD9_QbsY9Vvy5vr9Zmw/edit#heading=h.3zlthggr9vvv).  Basically, your own unrestricted filter.
+A really basic implementation of envoy [External Processing Filter](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/http/ext_proc/v3/ext_proc.proto#envoy-v3-api-msg-extensions-filters-http-ext-proc-v3-externalprocessor).  This capability allows you to define an external gRPC server which can selectively process headers and payload/body of requests (see [External Processing Filter PRD](https://docs.google.com/document/d/1IZqm5IUnG9gc2VqwGaN5C2TZAD9_QbsY9Vvy5vr9Zmw/edit#heading=h.3zlthggr9vvv).  Basically, your own unrestricted filter.
 
 ```
           ext_proc 
@@ -252,7 +252,9 @@ What happens is that the external processing filter will
 
 
 ```bash
-$ curl -v -H "host: http.domain.com" -H "content-type: text/plain" --resolve  http.domain.com:8080:127.0.0.1  -H "user: sal" -d 'foo' http://http.domain.com:8080/post
+$ curl -v -H "host: http.domain.com" -H "content-type: text/plain" \
+  --resolve  http.domain.com:8080:127.0.0.1 \
+   -H "user: sal" -d 'foo' http://http.domain.com:8080/post
 
 > POST /post HTTP/1.1
 > Host: http.domain.com
