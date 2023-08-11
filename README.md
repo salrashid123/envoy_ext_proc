@@ -299,6 +299,13 @@ Thats it, i'll be adding on more features as they become available to this repo.
 
 --- 
 
+## Building docker image
+```
+docker build --tag extproc .
+docker run -it -p 18080:18080 extproc
+```
+
+
 ## Other links
 Other reference envoy samples
 
