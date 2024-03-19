@@ -56,7 +56,7 @@ If the request type is GET or if the header 'user' is not present no modificatio
 First this code was just committed in PR [14385](https://github.com/envoyproxy/envoy/pull/14385) so we will need envoy from the dev branch that was just committed
 
 ```bash
-docker cp `docker create  envoyproxy/envoy-dev:latest`:/usr/local/bin/envoy .
+docker cp `docker create envoyproxy/envoy:v1.29.2`:/usr/local/bin/envoy /tmp/
 ```
 
 Now start the external gRPC server
@@ -78,7 +78,7 @@ As more features are implemented, you can handle new processing request types.
 
 Now start envoy
 
-```
+```bash
 ./envoy -c server.yaml -l debug
 ```
 
