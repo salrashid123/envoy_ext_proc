@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -75,7 +76,7 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 
 			isPOST := false
 			for _, n := range h.RequestHeaders.Headers.Headers {
-				if n.Key == ":method" && n.Value == "POST" {
+				if n.Key == ":method" && fmt.Sprintf("%s", n.RawValue) == "POST" {
 					isPOST = true
 					break
 				}
