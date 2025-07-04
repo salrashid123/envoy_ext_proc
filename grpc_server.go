@@ -47,6 +47,10 @@ func (s *healthServer) Watch(in *healthpb.HealthCheckRequest, srv healthpb.Healt
 	return status.Error(codes.Unimplemented, "Watch is not implemented")
 }
 
+func (s *healthServer) List(context.Context, *healthpb.HealthListRequest) (*healthpb.HealthListResponse, error) {
+	return &healthpb.HealthListResponse{}, nil
+}
+
 func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 
 	log.Println("Got stream:  -->  ")
@@ -113,10 +117,12 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 			r := req.Request
 			b := r.(*pb.ProcessingRequest_RequestBody)
 			log.Printf("   RequestBody: %s", string(b.RequestBody.Body))
-			log.Printf("   EndOfStream: %T", b.RequestBody.EndOfStream)
+			log.Printf("   EndOfStream: %t", b.RequestBody.EndOfStream)
+
 			if b.RequestBody.EndOfStream {
 
 				bytesToSend := append(b.RequestBody.Body, []byte(` baaar `)...)
+
 				resp = &pb.ProcessingResponse{
 					Response: &pb.ProcessingResponse_RequestBody{
 						RequestBody: &pb.BodyResponse{
@@ -125,9 +131,10 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 									SetHeaders: []*core.HeaderValueOption{
 										{
 											Header: &core.HeaderValue{
-												Key:   "Content-Length",
-												Value: strconv.Itoa(len(bytesToSend)),
+												Key:      "added-header",
+												RawValue: []byte("my new header"),
 											},
+											AppendAction: core.HeaderValueOption_APPEND_IF_EXISTS_OR_ADD,
 										},
 									},
 								},
@@ -141,7 +148,7 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 					},
 					ModeOverride: &v3.ProcessingMode{
 						ResponseHeaderMode: v3.ProcessingMode_SEND,
-						ResponseBodyMode:   v3.ProcessingMode_NONE,
+						ResponseBodyMode:   v3.ProcessingMode_BUFFERED,
 					},
 				}
 			}
@@ -154,11 +161,10 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 			responseSize := 0
 			for _, n := range h.ResponseHeaders.Headers.Headers {
 				if n.Key == "content-length" {
-					responseSize, _ = strconv.Atoi(n.Value)
+					responseSize, err = strconv.Atoi(string(n.RawValue))
 					break
 				}
 			}
-
 			log.Println("  Removing access-control-allow-* headers")
 			rhq := &pb.HeadersResponse{
 				Response: &pb.CommonResponse{
@@ -167,20 +173,21 @@ func (s *server) Process(srv pb.ExternalProcessor_ProcessServer) error {
 						SetHeaders: []*core.HeaderValueOption{
 							{
 								Header: &core.HeaderValue{
-									Key:   "content-type",
-									Value: "text/plain",
+									Key:      "content-type",
+									RawValue: []byte("text/plain"),
 								},
 							},
 							{
 								Header: &core.HeaderValue{
-									Key:   "content-length",
-									Value: strconv.Itoa(responseSize + len([]byte(` qux`))),
+									Key:      "content-length",
+									RawValue: []byte(strconv.Itoa(responseSize + len([]byte(` qux`)))),
 								},
 							},
 						},
 					},
 				},
 			}
+			fmt.Printf("Added %v", rhq)
 			resp = &pb.ProcessingResponse{
 				Response: &pb.ProcessingResponse_ResponseHeaders{
 					ResponseHeaders: rhq,

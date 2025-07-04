@@ -53,10 +53,10 @@ If the request type is GET or if the header 'user' is not present no modificatio
 
 ---
 
-First this code was just committed in PR [14385](https://github.com/envoyproxy/envoy/pull/14385) so we will need envoy from the dev branch that was just committed
+First this code was just committed in PR [14385](https://github.com/envoyproxy/envoy/pull/14385) so we will need envoy from latest:
 
 ```bash
-docker cp `docker create envoyproxy/envoy:v1.29.2`:/usr/local/bin/envoy /tmp/
+docker cp `docker create envoyproxy/envoy:v1.33-latest`:/usr/local/bin/envoy /tmp
 ```
 
 Now start the external gRPC server
@@ -67,39 +67,33 @@ go run grpc_server.go
 
 This will start the gRPC server which will receive the requests from envoy.  
 
-
-I'm not sure if i've implemented the server correctly but the following does redact the `user` header from upstream
-
-```golang
-
-```
-
-As more features are implemented, you can handle new processing request types.  
-
 Now start envoy
 
 ```bash
 ./envoy -c server.yaml -l debug
 ```
 
-Note, the external processing filter is by default configured to ONLY ask for the inbound request headers.  What we're going to do in code is first check if the header contains the specific value we're interested in (i.,e header has a 'user' in it), if so, then we will ask for the request body, which will ask for the response headers which inturn will override and ask for the response body
+The config w'ere using allows the external processor to progressively override headers sent over
 
 ```yaml
           http_filters:
           - name: envoy.filters.http.ext_proc
             typed_config:
-              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3alpha.ExternalProcessor
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
               failure_mode_allow: false
-              async_mode: false              
-              request_attributes:
-              - user
-              response_attributes:
-              - server
+              allow_mode_override: true
+              allowed_override_modes: 
+              - request_header_mode: "SEND"
+                response_header_mode: "SEND"
+                request_body_mode: "BUFFERED"
+                response_body_mode: "BUFFERED"
+                request_trailer_mode: "SKIP"
+                response_trailer_mode: "SKIP"              
               processing_mode:
                 request_header_mode: "SEND"
-                response_header_mode: "SKIP"
-                request_body_mode: "NONE"
-                response_body_mode: "NONE"
+                response_header_mode: "SEND"
+                request_body_mode: "BUFFERED"
+                response_body_mode: "BUFFERED"
                 request_trailer_mode: "SKIP"
                 response_trailer_mode: "SKIP"
               grpc_service:
@@ -240,7 +234,7 @@ What happens is that the external processing filter will
 
 2. In `*pb.ProcessingRequest_RequestBody`,
   - append `bar` to the inbound request body
-  - update the content-length header (since thats just what we did here by appending)
+  - add a new header `added-header`
 
 3. In `*pb.ProcessingRequest_ResponseHeaders`,
   - remove the following headers sent by httpbin:  `"access-control-allow-origin", "access-control-allow-credentials"`
@@ -253,23 +247,23 @@ What happens is that the external processing filter will
 
 ```bash
 $ curl -v -H "host: http.domain.com" -H "content-type: text/plain" \
-  --resolve  http.domain.com:8080:127.0.0.1 \
-   -H "user: sal" -d 'foo' http://http.domain.com:8080/post
+  --resolve  http.domain.com:8080:127.0.0.1   -H "user: sal" -d 'foo' http://http.domain.com:8080/post
 
 > POST /post HTTP/1.1
 > Host: http.domain.com
-> User-Agent: curl/7.74.0
+> User-Agent: curl/8.14.1
 > Accept: */*
 > content-type: text/plain
 > user: sal
 > Content-Length: 3
 
+* upload completely sent off: 3 bytes
 < HTTP/1.1 200 OK
-< date: Wed, 31 Mar 2021 17:05:01 GMT
+< date: Fri, 04 Jul 2025 13:12:11 GMT
 < server: envoy
-< x-envoy-upstream-service-time: 24
+< x-envoy-upstream-service-time: 177
 < content-type: text/plain
-< content-length: 453
+< content-length: 490
 
 {
   "args": {}, 
@@ -278,15 +272,16 @@ $ curl -v -H "host: http.domain.com" -H "content-type: text/plain" \
   "form": {}, 
   "headers": {
     "Accept": "*/*", 
+    "Added-Header": "my new header", 
     "Content-Length": "10", 
     "Content-Type": "text/plain", 
     "Host": "http.domain.com", 
-    "User-Agent": "curl/7.74.0", 
-    "X-Amzn-Trace-Id": "Root=1-6064abbd-1a54289105d3cec56cec7c9c", 
+    "User-Agent": "curl/8.14.1", 
+    "X-Amzn-Trace-Id": "Root=1-6867d32b-600054140d75cd4d13d6dfc6", 
     "X-Envoy-Expected-Rq-Timeout-Ms": "15000"
   }, 
   "json": null, 
-  "origin": "108.51.98.171", 
+  "origin": "66.44.26.235", 
   "url": "https://http.domain.com/post"
 }
 

@@ -40,11 +40,18 @@ static_resources:
               "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
               failure_mode_allow: false
               allow_mode_override: true
+              allowed_override_modes: 
+              - request_header_mode: "SEND"
+                response_header_mode: "SEND"
+                request_body_mode: "BUFFERED"
+                response_body_mode: "BUFFERED"
+                request_trailer_mode: "SKIP"
+                response_trailer_mode: "SKIP"              
               processing_mode:
                 request_header_mode: "SEND"
-                response_header_mode: "SKIP"
-                request_body_mode: "NONE"
-                response_body_mode: "NONE"
+                response_header_mode: "SEND"
+                request_body_mode: "BUFFERED"
+                response_body_mode: "BUFFERED"
                 request_trailer_mode: "SKIP"
                 response_trailer_mode: "SKIP"
               grpc_service:
